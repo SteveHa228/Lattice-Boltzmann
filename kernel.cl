@@ -1,22 +1,3 @@
-__kernel void stepOpenCL(__global float* r, __global const float* d, int n)
-{
-    int i = get_global_id(0);
-    int j = get_global_id(1);
-    if(i >= n || j >= n)
-        return;
-    
-    float v = HUGE_VALF;
-    for(int k = 0; k < n; ++k)
-    {
-        float x = d[n * i + k];
-        float y = d[n * k + j];
-        float z = x + y;
-        v = min(v, z);
-    }
-    r[n*i+j] = v;
-}
-
-
 __kernel void initializeCL( int N, int Q, double DENSITY, double LID_VELOCITY, 
                 __constant double *ex, __constant double *ey, __constant int *oppos, __constant double *wt,//Q
                 __global double *rho, __global double *ux, __global double *uy, __global double* sigma,//N*N 
@@ -70,7 +51,7 @@ __kernel void collideAndStreamCL(// READ-ONLY parameters (used by this function 
 {
     int i = get_global_id(0);
     int j = get_global_id(1);
-    if(i >= N || j >= N)
+    if(i >= N - 1 || j >= N - 1 || i == 0 || j == 0)
         return;
 
     // natural index

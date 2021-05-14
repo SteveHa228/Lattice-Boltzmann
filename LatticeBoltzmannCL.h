@@ -23,6 +23,22 @@ static cl_context context;
 static cl_device_id device;
 static cl_program program;
 
+//Allocate memory & copy data to GPU 
+static cl_mem fGPU ;
+static cl_mem feqGPU;
+static cl_mem f_newGPU;
+static cl_mem rhoGPU;
+static cl_mem uxGPU;
+static cl_mem uyGPU;
+static cl_mem sigmaGPU;
+static cl_mem exGPU;
+static cl_mem eyGPU;
+static cl_mem opposGPU;
+static cl_mem wtGPU;
+
+static cl_kernel kernelCollideStream;
+static cl_kernel kernelUpdate;
+
 static inline int divup(int a, int b)
 {
     return (a + b - 1) / b;
@@ -246,248 +262,56 @@ void initializeCL(const int N, const int Q, const double DENSITY, const double L
     CHECK(clReleaseMemObject(opposGPU));
     CHECK(clReleaseMemObject(wtGPU));
     // Release Others
-    //CHECK(clReleaseProgram(program));
     CHECK(clReleaseKernel(kernel));
-    //CHECK(clReleaseCommandQueue(queue));
-    //CHECK(clReleaseContext(context));
 }
 
-void collideAndStreamCL(const int N, const int Q, const double DENSITY, const double LID_VELOCITY, const double REYNOLDS_NUMBER,  
-                double *ex, double *ey, int *oppos, double *wt,
-                double *rho, double *ux, double *uy, double* sigma, 
-                double *f, double *feq, double *f_new)
-{ 
-    cl_int err;
-    cl_kernel kernel = clCreateKernel(program, "collideAndStreamCL", &err);
-    check(err, "clCreateKernel");
-
-    //Allocate memory & copy data to GPU 
-    cl_mem fGPU = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, N * N * Q * sizeof(double), (void*)f, &err);
-    check(err, "clCreateBuffer");
-
-    cl_mem feqGPU = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, N * N * Q * sizeof(double), (void*)feq, &err);
-    check(err, "clCreateBuffer");
-    
-    cl_mem f_newGPU = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, N * N * Q * sizeof(double), (void*)f_new, &err);
-    check(err, "clCreateBuffer");
-
-    cl_mem rhoGPU = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR, N * N * sizeof(double), (void*)rho, &err);
-    check(err, "clCreateBuffer");
-
-    cl_mem uxGPU = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR, N * N * sizeof(double), (void*)ux, &err);
-    check(err, "clCreateBuffer");
-
-    cl_mem uyGPU = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR, N * N * sizeof(double), (void*)uy, &err);
-    check(err, "clCreateBuffer");
-
-    cl_mem sigmaGPU = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR, N * N * sizeof(double), (void*)sigma, &err);
-    check(err, "clCreateBuffer");
-
-    cl_mem exGPU = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, Q * sizeof(double), (void*)ex, &err);
-    check(err, "clCreateBuffer");
-
-    cl_mem eyGPU = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, Q * sizeof(double), (void*)ey, &err);
-    check(err, "clCreateBuffer");
-
-    cl_mem opposGPU = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, Q * sizeof(int), (void*)oppos, &err);
-    check(err, "clCreateBuffer");
-
-    cl_mem wtGPU = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, Q * sizeof(double), (void*)wt, &err);
-    check(err, "clCreateBuffer");
-
-    //run kernel 
-    size_t wlsize[2] = {16, 16};
-    size_t wgsize[2] = {size_t(roundup(N, wlsize[0])), size_t(roundup(N, wlsize[1]))};
-
-    CHECK(clSetKernelArg(kernel, 0, sizeof(int), (void*)&N));
-    CHECK(clSetKernelArg(kernel, 1, sizeof(int), (void*)&Q));
-    CHECK(clSetKernelArg(kernel, 2, sizeof(double), (void*)&DENSITY));
-    CHECK(clSetKernelArg(kernel, 3, sizeof(double), (void*)&LID_VELOCITY));
-    CHECK(clSetKernelArg(kernel, 4, sizeof(double), (void*)&REYNOLDS_NUMBER));
-
-    CHECK(clSetKernelArg(kernel, 5, sizeof(cl_mem), (void*)&exGPU));
-    CHECK(clSetKernelArg(kernel, 6, sizeof(cl_mem), (void*)&eyGPU));
-    CHECK(clSetKernelArg(kernel, 7, sizeof(cl_mem), (void*)&opposGPU));
-    CHECK(clSetKernelArg(kernel, 8, sizeof(cl_mem), (void*)&wtGPU));
-
-    CHECK(clSetKernelArg(kernel, 9, sizeof(cl_mem), (void*)&rhoGPU));
-    CHECK(clSetKernelArg(kernel, 10, sizeof(cl_mem), (void*)&uxGPU));
-    CHECK(clSetKernelArg(kernel, 11, sizeof(cl_mem), (void*)&uyGPU));
-    CHECK(clSetKernelArg(kernel, 12, sizeof(cl_mem), (void*)&sigmaGPU));
-
-    CHECK(clSetKernelArg(kernel, 13, sizeof(cl_mem), (void*)&fGPU));
-    CHECK(clSetKernelArg(kernel, 14, sizeof(cl_mem), (void*)&feqGPU));
-    CHECK(clSetKernelArg(kernel, 15, sizeof(cl_mem), (void*)&f_newGPU));
-
-    CHECK(clEnqueueNDRangeKernel(queue, kernel, 2, NULL, wgsize, wlsize, 0, NULL, NULL));
-    CHECK(clFinish(queue));
-    
-    // Copy data back to CPU & release memory
-    CHECK(clEnqueueReadBuffer(queue, feqGPU, CL_TRUE, 0, N * N * Q * sizeof(double), feq, 0, NULL, NULL));
-    CHECK(clEnqueueReadBuffer(queue, f_newGPU, CL_TRUE, 0, N * N * Q * sizeof(double), f_new, 0, NULL, NULL));
-
-    CHECK(clReleaseMemObject(fGPU));
-    CHECK(clReleaseMemObject(feqGPU));
-    CHECK(clReleaseMemObject(f_newGPU));
-    CHECK(clReleaseMemObject(rhoGPU));
-    CHECK(clReleaseMemObject(uxGPU));
-    CHECK(clReleaseMemObject(uyGPU));
-    CHECK(clReleaseMemObject(sigmaGPU));
-    CHECK(clReleaseMemObject(exGPU));
-    CHECK(clReleaseMemObject(eyGPU));
-    CHECK(clReleaseMemObject(opposGPU));
-    CHECK(clReleaseMemObject(wtGPU));
-    // Release Others
-    //CHECK(clReleaseProgram(program));
-    CHECK(clReleaseKernel(kernel));
-    //CHECK(clReleaseCommandQueue(queue));
-    //CHECK(clReleaseContext(context));
-}
-
-void macroVarCL(const int N, const int Q, const double DENSITY, const double LID_VELOCITY, const double REYNOLDS_NUMBER,  
-                double *ex, double *ey, int *oppos, double *wt,
-                double *rho, double *ux, double *uy, double* sigma, 
-                double *f, double *feq, double *f_new)
-{ 
-    cl_int err;
-    cl_kernel kernel = clCreateKernel(program, "macroVarCL", &err);
-    check(err, "clCreateKernel");
-
-    //Allocate memory & copy data to GPU 
-    cl_mem fGPU = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, N * N * Q * sizeof(double), (void*)f, &err);
-    check(err, "clCreateBuffer");
-
-    cl_mem feqGPU = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, N * N * Q * sizeof(double), (void*)feq, &err);
-    check(err, "clCreateBuffer");
-    
-    cl_mem f_newGPU = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, N * N * Q * sizeof(double), (void*)f_new, &err);
-    check(err, "clCreateBuffer");
-
-    cl_mem rhoGPU = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, N * N * sizeof(double), (void*)rho, &err);
-    check(err, "clCreateBuffer");
-
-    cl_mem uxGPU = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, N * N * sizeof(double), (void*)ux, &err);
-    check(err, "clCreateBuffer");
-
-    cl_mem uyGPU = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, N * N * sizeof(double), (void*)uy, &err);
-    check(err, "clCreateBuffer");
-
-    cl_mem sigmaGPU = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, N * N * sizeof(double), (void*)sigma, &err);
-    check(err, "clCreateBuffer");
-
-    cl_mem exGPU = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, Q * sizeof(double), (void*)ex, &err);
-    check(err, "clCreateBuffer");
-
-    cl_mem eyGPU = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, Q * sizeof(double), (void*)ey, &err);
-    check(err, "clCreateBuffer");
-
-    cl_mem opposGPU = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, Q * sizeof(int), (void*)oppos, &err);
-    check(err, "clCreateBuffer");
-
-    cl_mem wtGPU = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, Q * sizeof(double), (void*)wt, &err);
-    check(err, "clCreateBuffer");
-
-    //run kernel 
-    size_t wlsize[2] = {16, 16};
-    size_t wgsize[2] = {size_t(roundup(N, wlsize[0])), size_t(roundup(N, wlsize[1]))};
-
-    CHECK(clSetKernelArg(kernel, 0, sizeof(int), (void*)&N));
-    CHECK(clSetKernelArg(kernel, 1, sizeof(int), (void*)&Q));
-    CHECK(clSetKernelArg(kernel, 2, sizeof(double), (void*)&DENSITY));
-    CHECK(clSetKernelArg(kernel, 3, sizeof(double), (void*)&LID_VELOCITY));
-    CHECK(clSetKernelArg(kernel, 4, sizeof(double), (void*)&REYNOLDS_NUMBER));
-
-    CHECK(clSetKernelArg(kernel, 5, sizeof(cl_mem), (void*)&exGPU));
-    CHECK(clSetKernelArg(kernel, 6, sizeof(cl_mem), (void*)&eyGPU));
-    CHECK(clSetKernelArg(kernel, 7, sizeof(cl_mem), (void*)&opposGPU));
-    CHECK(clSetKernelArg(kernel, 8, sizeof(cl_mem), (void*)&wtGPU));
-
-    CHECK(clSetKernelArg(kernel, 9, sizeof(cl_mem), (void*)&rhoGPU));
-    CHECK(clSetKernelArg(kernel, 10, sizeof(cl_mem), (void*)&uxGPU));
-    CHECK(clSetKernelArg(kernel, 11, sizeof(cl_mem), (void*)&uyGPU));
-    CHECK(clSetKernelArg(kernel, 12, sizeof(cl_mem), (void*)&sigmaGPU));
-
-    CHECK(clSetKernelArg(kernel, 13, sizeof(cl_mem), (void*)&fGPU));
-    CHECK(clSetKernelArg(kernel, 14, sizeof(cl_mem), (void*)&feqGPU));
-    CHECK(clSetKernelArg(kernel, 15, sizeof(cl_mem), (void*)&f_newGPU));
-
-    CHECK(clEnqueueNDRangeKernel(queue, kernel, 2, NULL, wgsize, wlsize, 0, NULL, NULL));
-    CHECK(clFinish(queue));
-    
-    // Copy data back to CPU & release memory
-    CHECK(clEnqueueReadBuffer(queue, fGPU, CL_TRUE, 0, N * N * Q * sizeof(double), f, 0, NULL, NULL));
-    CHECK(clEnqueueReadBuffer(queue, rhoGPU, CL_TRUE, 0, N * N * sizeof(double), rho, 0, NULL, NULL));
-    CHECK(clEnqueueReadBuffer(queue, uxGPU, CL_TRUE, 0, N * N * sizeof(double), ux, 0, NULL, NULL));
-    CHECK(clEnqueueReadBuffer(queue, uyGPU, CL_TRUE, 0, N * N * sizeof(double), uy, 0, NULL, NULL));
-    CHECK(clEnqueueReadBuffer(queue, sigmaGPU, CL_TRUE, 0, N * N * sizeof(double), sigma, 0, NULL, NULL));
-
-    CHECK(clReleaseMemObject(fGPU));
-    CHECK(clReleaseMemObject(feqGPU));
-    CHECK(clReleaseMemObject(f_newGPU));
-    CHECK(clReleaseMemObject(rhoGPU));
-    CHECK(clReleaseMemObject(uxGPU));
-    CHECK(clReleaseMemObject(uyGPU));
-    CHECK(clReleaseMemObject(sigmaGPU));
-    CHECK(clReleaseMemObject(exGPU));
-    CHECK(clReleaseMemObject(eyGPU));
-    CHECK(clReleaseMemObject(opposGPU));
-    CHECK(clReleaseMemObject(wtGPU));
-    // Release Others
-    //CHECK(clReleaseProgram(program));
-    CHECK(clReleaseKernel(kernel));
-    //CHECK(clReleaseCommandQueue(queue));
-    //CHECK(clReleaseContext(context));
-}
-
-void LatticeBoltzmann(const int N, const int Q, const double DENSITY, const double LID_VELOCITY, const double REYNOLDS_NUMBER,  
+void LatticeBoltzmannInit(const int N, const int Q, const double DENSITY, const double LID_VELOCITY, const double REYNOLDS_NUMBER,  
                 double *ex, double *ey, int *oppos, double *wt,
                 double *rho, double *ux, double *uy, double* sigma, 
                 double *f, double *feq, double *f_new)
 {
     cl_int err;
-    cl_kernel kernelCollideStream = clCreateKernel(program, "collideAndStreamCL", &err);
+    kernelCollideStream = clCreateKernel(program, "collideAndStreamCL", &err);
     check(err, "clCreateKernel");
 
-    cl_kernel kernelUpdate = clCreateKernel(program, "macroVarCL", &err);
+    kernelUpdate = clCreateKernel(program, "macroVarCL", &err);
     check(err, "clCreateKernel");
 
     //Allocate memory & copy data to GPU 
-    cl_mem fGPU = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, N * N * Q * sizeof(double), (void*)f, &err);
+    fGPU = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, N * N * Q * sizeof(double), (void*)f, &err);
     check(err, "clCreateBuffer");
 
-    cl_mem feqGPU = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, N * N * Q * sizeof(double), (void*)feq, &err);
+    feqGPU = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, N * N * Q * sizeof(double), (void*)feq, &err);
     check(err, "clCreateBuffer");
     
-    cl_mem f_newGPU = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, N * N * Q * sizeof(double), (void*)f_new, &err);
+    f_newGPU = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, N * N * Q * sizeof(double), (void*)f_new, &err);
     check(err, "clCreateBuffer");
 
-    cl_mem rhoGPU = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, N * N * sizeof(double), (void*)rho, &err);
+    rhoGPU = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, N * N * sizeof(double), (void*)rho, &err);
     check(err, "clCreateBuffer");
 
-    cl_mem uxGPU = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, N * N * sizeof(double), (void*)ux, &err);
+    uxGPU = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, N * N * sizeof(double), (void*)ux, &err);
     check(err, "clCreateBuffer");
 
-    cl_mem uyGPU = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, N * N * sizeof(double), (void*)uy, &err);
+    uyGPU = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, N * N * sizeof(double), (void*)uy, &err);
     check(err, "clCreateBuffer");
 
-    cl_mem sigmaGPU = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, N * N * sizeof(double), (void*)sigma, &err);
+    sigmaGPU = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, N * N * sizeof(double), (void*)sigma, &err);
     check(err, "clCreateBuffer");
 
-    cl_mem exGPU = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, Q * sizeof(double), (void*)ex, &err);
+    exGPU = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, Q * sizeof(double), (void*)ex, &err);
     check(err, "clCreateBuffer");
 
-    cl_mem eyGPU = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, Q * sizeof(double), (void*)ey, &err);
+    eyGPU = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, Q * sizeof(double), (void*)ey, &err);
     check(err, "clCreateBuffer");
 
-    cl_mem opposGPU = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, Q * sizeof(int), (void*)oppos, &err);
+    opposGPU = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, Q * sizeof(int), (void*)oppos, &err);
     check(err, "clCreateBuffer");
 
-    cl_mem wtGPU = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, Q * sizeof(double), (void*)wt, &err);
+    wtGPU = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, Q * sizeof(double), (void*)wt, &err);
     check(err, "clCreateBuffer");
 
-    //run kernel 
-    size_t wlsize[2] = {16, 16};
-    size_t wgsize[2] = {size_t(roundup(N, wlsize[0])), size_t(roundup(N, wlsize[1]))};
+    // kernel parameter
 
     CHECK(clSetKernelArg(kernelCollideStream, 0, sizeof(int), (void*)&N));
     CHECK(clSetKernelArg(kernelCollideStream, 1, sizeof(int), (void*)&Q));
@@ -509,8 +333,8 @@ void LatticeBoltzmann(const int N, const int Q, const double DENSITY, const doub
     CHECK(clSetKernelArg(kernelCollideStream, 14, sizeof(cl_mem), (void*)&feqGPU));
     CHECK(clSetKernelArg(kernelCollideStream, 15, sizeof(cl_mem), (void*)&f_newGPU));
 
-    CHECK(clEnqueueNDRangeKernel(queue, kernelCollideStream, 2, NULL, wgsize, wlsize, 0, NULL, NULL));
-    CHECK(clFinish(queue));
+    //CHECK(clEnqueueNDRangeKernel(queue, kernelCollideStream, 2, NULL, wgsize, wlsize, 0, NULL, NULL));
+    //CHECK(clFinish(queue));
 
     CHECK(clSetKernelArg(kernelUpdate, 0, sizeof(int), (void*)&N));
     CHECK(clSetKernelArg(kernelUpdate, 1, sizeof(int), (void*)&Q));
@@ -532,6 +356,21 @@ void LatticeBoltzmann(const int N, const int Q, const double DENSITY, const doub
     CHECK(clSetKernelArg(kernelUpdate, 14, sizeof(cl_mem), (void*)&feqGPU));
     CHECK(clSetKernelArg(kernelUpdate, 15, sizeof(cl_mem), (void*)&f_newGPU));
 
+    //CHECK(clEnqueueNDRangeKernel(queue, kernelUpdate, 2, NULL, wgsize, wlsize, 0, NULL, NULL));
+    //CHECK(clFinish(queue));
+}
+void LatticeBoltzmann(const int N, const int Q, const double DENSITY, const double LID_VELOCITY, const double REYNOLDS_NUMBER,  
+                double *ex, double *ey, int *oppos, double *wt,
+                double *rho, double *ux, double *uy, double* sigma, 
+                double *f, double *feq, double *f_new)
+{
+    // kernel size
+    size_t wlsize[2] = {16, 16};
+    size_t wgsize[2] = {size_t(roundup(N, wlsize[0])), size_t(roundup(N, wlsize[1]))};
+
+    CHECK(clEnqueueNDRangeKernel(queue, kernelCollideStream, 2, NULL, wgsize, wlsize, 0, NULL, NULL));
+    CHECK(clFinish(queue));
+
     CHECK(clEnqueueNDRangeKernel(queue, kernelUpdate, 2, NULL, wgsize, wlsize, 0, NULL, NULL));
     CHECK(clFinish(queue));
     
@@ -543,25 +382,6 @@ void LatticeBoltzmann(const int N, const int Q, const double DENSITY, const doub
     CHECK(clEnqueueReadBuffer(queue, uxGPU, CL_TRUE, 0, N * N * sizeof(double), ux, 0, NULL, NULL));
     CHECK(clEnqueueReadBuffer(queue, uyGPU, CL_TRUE, 0, N * N * sizeof(double), uy, 0, NULL, NULL));
     CHECK(clEnqueueReadBuffer(queue, sigmaGPU, CL_TRUE, 0, N * N * sizeof(double), sigma, 0, NULL, NULL));
-
-    CHECK(clReleaseMemObject(fGPU));
-    CHECK(clReleaseMemObject(feqGPU));
-    CHECK(clReleaseMemObject(f_newGPU));
-    CHECK(clReleaseMemObject(rhoGPU));
-    CHECK(clReleaseMemObject(uxGPU));
-    CHECK(clReleaseMemObject(uyGPU));
-    CHECK(clReleaseMemObject(sigmaGPU));
-    CHECK(clReleaseMemObject(exGPU));
-    CHECK(clReleaseMemObject(eyGPU));
-    CHECK(clReleaseMemObject(opposGPU));
-    CHECK(clReleaseMemObject(wtGPU));
-    
-    // Release Others
-    //CHECK(clReleaseProgram(program));
-    CHECK(clReleaseKernel(kernelCollideStream));
-    CHECK(clReleaseKernel(kernelUpdate));
-    //CHECK(clReleaseCommandQueue(queue));
-    //CHECK(clReleaseContext(context));
 }
 
 void ReleaseRessource()
@@ -569,4 +389,6 @@ void ReleaseRessource()
     CHECK(clReleaseProgram(program));
     CHECK(clReleaseCommandQueue(queue));
     CHECK(clReleaseContext(context));
+    CHECK(clReleaseKernel(kernelCollideStream));
+    CHECK(clReleaseKernel(kernelUpdate));
 }

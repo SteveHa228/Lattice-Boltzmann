@@ -415,7 +415,7 @@ void macroVar( // READ-ONLY parameters (used by this function but not changed)
 
     // update density at interior nodes
     rho[index]=0.0;
-    for(int a=0;a<Q;a++) {
+    for(int a=0;a<Q;a++) {      
         int index_f = a + index*Q;
         rho[index] += f_new[index_f];
     }
@@ -560,21 +560,15 @@ int main(int argc, char* argv[])
     // specify min and max window coordinates
     double xmin = 0, xmax = N, ymin = 0, ymax = N;
 
+    LatticeBoltzmannInit(N, Q, DENSITY, LID_VELOCITY, REYNOLDS_NUMBER, ex, ey, oppos, wt, rho, ux, uy, sigma, f, feq, f_new);
+
     while(!glfwWindowShouldClose(window))
     {
         // increment lattice time
         time++;     
 
-        // collision and streaming
-        //collideAndStream(N, Q, DENSITY, LID_VELOCITY, REYNOLDS_NUMBER, ex, ey, oppos, wt, rho, ux, uy, sigma, f, feq, f_new);
-        //collideAndStreamCL(N, Q, DENSITY, LID_VELOCITY, REYNOLDS_NUMBER, ex, ey, oppos, wt, rho, ux, uy, sigma, f, feq, f_new);
-        // calculate macroscopic variables
-        //macroVar(N, Q, DENSITY, LID_VELOCITY, REYNOLDS_NUMBER, ex, ey, oppos, wt, rho, ux, uy, sigma, f, feq, f_new);
-        //macroVarCL(N, Q, DENSITY, LID_VELOCITY, REYNOLDS_NUMBER, ex, ey, oppos, wt, rho, ux, uy, sigma, f, feq, f_new);
-        // on-the-fly OpenGL graphics
-
         LatticeBoltzmann(N, Q, DENSITY, LID_VELOCITY, REYNOLDS_NUMBER, ex, ey, oppos, wt, rho, ux, uy, sigma, f, feq, f_new);
-        
+
         if(time%100 == 0) 
         {
             showGraphics(WIDTH, HEIGHT, xmin, xmax, ymin, ymax, ux, uy);
